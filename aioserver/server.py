@@ -3,6 +3,7 @@ import collections
 import io
 import json
 import logging
+import os
 import random
 
 from aiohttp import web
@@ -98,7 +99,13 @@ class Client:
     def __init__(self, client_id, queue):
         self.client_id = client_id
         self.queue = queue
-        self.data = dict(id=client_id, color=generate_random_color(), text=client_id)
+        server_name = os.environ.get('USER', "aioserver")
+        self.data = dict(
+            id=client_id,
+            color=generate_random_color(),
+            server=server_name,
+            text="{}/{}".format(server_name, client_id),
+        )
 
 
 class Server:
