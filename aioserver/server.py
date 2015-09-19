@@ -3,12 +3,22 @@ import collections
 import io
 import json
 import logging
+import random
 
 from aiohttp import web
 from aiohttp.log import access_logger
 
 
 logger = logging.getLogger(__name__)
+
+
+def generate_random_color(range_min=0, range_max=255, alpha=0.5):
+    return "rgba({}, {}, {}, {})".format(
+        random.randint(range_min, range_max),  # red
+        random.randint(range_min, range_max),  # yellow
+        random.randint(range_min, range_max),  # blue
+        alpha
+    )
 
 
 def json_encode(data):
@@ -88,7 +98,7 @@ class Client:
     def __init__(self, client_id, queue):
         self.client_id = client_id
         self.queue = queue
-        self.data = dict(id=client_id)
+        self.data = dict(id=client_id, color=generate_random_color(), text=client_id)
 
 
 class Server:
@@ -109,6 +119,13 @@ class Server:
             self._loop = loop
         return loop
 
+    def add_default_headers(self, request, response):
+        headers = response.headers
+        headers['Access-Control-Allow-Credentials'] = 'true'
+        headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', "*")
+        headers['Access-Control-Allow-Headers'] = "Content-Type"
+        headers['Access-Control-Allow-Methods'] = 'GET, PUT'
+
     async def add_event(self, event):
         for client in self._clients.values():
             await client.queue.put(event)
@@ -124,14 +141,20 @@ class Server:
         loop = self.loop
         timeout = self.timeout
 
+        ip_address = request.transport.get_extra_info('peername')[0]
+
         # time in microseconds
         client_id = str(int(loop.time() * 10**6))
+
+        logger.info("OPEN %s %s", ip_address, client_id)
+
         queue = asyncio.Queue(loop=loop)
         client = Client(client_id, queue)
         self._clients[client_id] = client
 
         response = web.StreamResponse()
         response.content_type = "text/event-stream"
+        self.add_default_headers(request, response)
         response.start(request)
 
         CommentEvent("Howdy {}!".format(client_id)).dump(response)
@@ -156,6 +179,7 @@ class Server:
             del self._clients[client_id]
             await self.add_event(Event(dict(id=client_id), event_type="deleted"))
         await response.write_eof()
+        logger.info("CLOSE %s %s", ip_address, client_id)
         return response
 
     async def get_data(self, request):
