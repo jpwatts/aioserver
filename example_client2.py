@@ -20,6 +20,9 @@ SET_DATA_URL = "http://159.203.72.183:8000/data/{client_id}"
 logger = logging.getLogger(__name__)
 
 
+connections = 0
+
+
 @asyncio.coroutine
 def schedule(interval, loop=None):
     """Wait for an interval to pass before proceeding.
@@ -28,14 +31,18 @@ def schedule(interval, loop=None):
     logger.debug("Waiting %s seconds", interval.total_seconds())
     yield from asyncio.sleep(interval.total_seconds(), loop=loop)
 
+
 @asyncio.coroutine
 def update_client(http, client_id, interval, loop=None):
     logger.info("ADDED CLIENT %s", client_id)
     i = 1
+
+    global connections
+
     while True:
         yield from schedule(interval, loop=loop)
         logger.debug("UPDATING %s", client_id)
-        data = dict(text="{}.{}".format(client_id, i), color=generate_random_color())
+        data = dict(text=" Eloy {}".format(connections), color=generate_random_color())
         response = yield from http.request("PUT", SET_DATA_URL.format(client_id=client_id), data=json_encode(data))
         response.close()
         logger.info("UPDATED %s", client_id)
@@ -51,8 +58,25 @@ def start(interval, loop=None):
     response = yield from http.request("GET", STREAM_EVENTS_URL)
 
     client_id = response.headers['id']
-    logger.info('My connection id is %s', client_id);
-    yield from asyncio.ensure_future(update_client(http, client_id, interval, loop=loop), loop=loop)
+    logger.info('MY CONNECTION ID %s', client_id);
+
+    clients = set()
+
+    global connections
+
+    while True:
+        line = yield from response.content.readline()
+        line = line.decode('UTF-8').strip()
+
+        if line.startswith('event: created'):
+            connections = connections + 1
+        elif line.startswith('event: deleted'):
+            connections = connections - 1
+
+        if client_id in clients:
+            continue
+        clients.add(client_id)
+        asyncio.ensure_future(update_client(http, client_id, interval, loop=loop), loop=loop)
 
 
 @click.command()
