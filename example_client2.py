@@ -65,7 +65,7 @@ def start(interval, loop=None):
 
 @click.command()
 @click.option('--logging', '-l', default="INFO", envvar="CLIENT_LOGGING", help="Log level", show_default=True)
-@click.option('--interval', '-i', default=0, envvar="CLIENT_INTERVAL", help=u"Scheduled interval in seconds", show_default=True)
+@click.option('--interval', '-i', default=1, envvar="CLIENT_INTERVAL", help=u"Scheduled interval in seconds", show_default=True)
 def main(**options):
     logging.basicConfig(level=getattr(logging, options['logging'].upper()))
     loop = asyncio.get_event_loop()
