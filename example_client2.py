@@ -51,16 +51,8 @@ def start(interval, loop=None):
     response = yield from http.request("GET", STREAM_EVENTS_URL)
 
     client_id = response.headers['id']
-    logger.info('client_id %s', client_id);
-
-    clients = set()
-
-    while True:
-        line = yield from response.content.readline()
-        if client_id in clients:
-            continue
-        clients.add(client_id)
-        asyncio.ensure_future(update_client(http, client_id, interval, loop=loop), loop=loop)
+    logger.info('My connection id is %s', client_id);
+    yield from asyncio.ensure_future(update_client(http, client_id, interval, loop=loop), loop=loop)
 
 
 @click.command()
