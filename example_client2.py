@@ -50,15 +50,13 @@ def start(interval, loop=None):
     http = aiohttp.ClientSession(loop=loop)
     response = yield from http.request("GET", STREAM_EVENTS_URL)
 
+    client_id = response.headers['id']
+    logger.info('client_id %s', client_id);
+
     clients = set()
 
     while True:
         line = yield from response.content.readline()
-        line = line.decode('UTF-8').strip()
-        if not line.startswith('data: '):
-            continue
-        data = json.loads(line[6:])
-        client_id = data['id']
         if client_id in clients:
             continue
         clients.add(client_id)
