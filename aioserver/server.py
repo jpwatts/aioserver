@@ -162,6 +162,7 @@ class Server:
         response = web.StreamResponse()
         response.content_type = "text/event-stream"
         self.add_default_headers(request, response)
+        response.headers['id'] = client_id
         response.start(request)
 
         CommentEvent("Howdy {}!".format(client_id)).dump(response)
