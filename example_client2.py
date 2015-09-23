@@ -72,8 +72,7 @@ class ScheduledUpdate:
 
         client_id = response.headers['id']
         logger.info('MY CONNECTION ID %s', client_id);
-
-        clients = set()
+        asyncio.ensure_future(self.update_client(http, client_id, interval), loop=loop)
 
         while True:
             line = yield from response.content.readline()
@@ -83,11 +82,6 @@ class ScheduledUpdate:
                 self.connections += 1
             elif line.startswith('event: deleted'):
                 self.connections -= 1
-
-            if client_id in clients:
-                continue
-            clients.add(client_id)
-            asyncio.ensure_future(self.update_client(http, client_id, interval), loop=loop)
 
 
 @click.command()
