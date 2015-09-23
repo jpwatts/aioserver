@@ -18,12 +18,11 @@ class Client:
     def __init__(self, client_id, queue):
         self.client_id = client_id
         self.queue = queue
-        server_name = os.environ.get('USER', "aioserver")
         self.data = dict(
             id=client_id,
             color=generate_random_color(),
-            server=server_name,
-            text="{}/{}".format(server_name, client_id),
+            server=os.environ.get('USER', "aioserver"),
+            text=client_id,
         )
 
 
@@ -97,8 +96,8 @@ class Server:
         finally:
             del self._clients[client_id]
             await self.add_event(Event(dict(id=client_id), event_type="deleted"))
+            logger.info("CLOSE %s %s", ip_address, client_id)
         await response.write_eof()
-        logger.info("CLOSE %s %s", ip_address, client_id)
         return response
 
     async def get_data(self, request):
