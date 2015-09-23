@@ -1,98 +1,17 @@
 import asyncio
 import collections
-import io
 import json
 import logging
 import os
-import random
 
 from aiohttp import web
 from aiohttp.log import access_logger
 
+from .events import CommentEvent, Event, RetryEvent
+from .utils import generate_random_color, json_encode
+
 
 logger = logging.getLogger(__name__)
-
-
-def generate_random_color(range_min=0, range_max=255, alpha=0.5):
-    return "rgba({}, {}, {}, {})".format(
-        random.randint(range_min, range_max),  # red
-        random.randint(range_min, range_max),  # yellow
-        random.randint(range_min, range_max),  # blue
-        alpha
-    )
-
-
-def json_encode(data):
-    return json.dumps(data, separators=(',', ':'), sort_keys=True)
-
-
-class BaseEvent:
-    encoding = "UTF-8"
-    _payload = None
-
-    def encode(self):
-        raise NotImplementedError()
-
-    def dump(self, response):
-        payload = self._payload
-        if payload is None:
-            payload = self.encode().encode(self.encoding)
-            self._payload = payload
-        response.write(payload)
-
-
-class Event(BaseEvent):
-    def __init__(self, data, event_id=None, event_type=None):
-        self.data = data
-        self.event_id = event_id
-        self.event_type = event_type
-
-    def encode(self):
-        text_buffer = io.StringIO()
-
-        event_id = self.event_id
-        if event_id is not None:
-            text_buffer.write("id: {}\n".format(event_id))
-
-        event_type = self.event_type
-        if event_type is not None:
-            text_buffer.write("event: {}\n".format(event_type))
-
-        event_text = json_encode(self.data)
-        for line in event_text.splitlines():
-            text_buffer.write("data: {}\n".format(line))
-
-        text_buffer.write("\n")
-        return text_buffer.getvalue()
-
-
-class CommentEvent(BaseEvent):
-    def __init__(self, message=""):
-        self.message = message
-
-    def encode(self):
-        text_buffer = io.StringIO()
-
-        message = self.message
-        if message:
-            for line in message.splitlines():
-                text_buffer.write(": {}\n".format(line))
-        else:
-            text_buffer.write(":\n")
-
-        text_buffer.write("\n")
-        return text_buffer.getvalue()
-
-
-class RetryEvent(BaseEvent):
-    _multiplier = 1000  # specify wait in seconds, but send milliseconds
-
-    def __init__(self, wait):
-        self.wait = wait
-
-    def encode(self):
-        wait = int(self._multiplier * self.wait)
-        return "retry: {}\n\n".format(wait)
 
 
 class Client:
@@ -114,24 +33,16 @@ class Server:
     def __init__(self, address, port, loop=None):
         self.address = address
         self.port = port
-        self._loop = loop
+        self.loop = loop or asyncio.get_event_loop()
         self._clients = collections.OrderedDict()
         self._server = None
-
-    @property
-    def loop(self):
-        loop = self._loop
-        if loop is None:
-            loop = asyncio.get_event_loop()
-            self._loop = loop
-        return loop
 
     def add_default_headers(self, request, response):
         headers = response.headers
         headers['Access-Control-Allow-Credentials'] = 'true'
         headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', "*")
         headers['Access-Control-Allow-Headers'] = "Content-Type"
-        headers['Access-Control-Allow-Methods'] = 'GET, PUT'
+        headers['Access-Control-Allow-Methods'] = request.method
 
     async def add_event(self, event):
         for client in self._clients.values():
