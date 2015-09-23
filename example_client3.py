@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 class ScheduledUpdate:
 
     def __init__(self, loop=None):
+        """Set loop and default connections to zero.
+        """
         self.loop = loop
         self.connections = 0
 
