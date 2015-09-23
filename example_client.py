@@ -1,10 +1,9 @@
-#!/usr/bin/env python3.5
-
 import asyncio
-import datetime
+import contextlib
 import json
 import logging
-import time
+import random
+import urllib.parse
 
 import aiohttp
 
@@ -13,107 +12,112 @@ import click
 from aioserver.server import generate_random_color, json_encode
 
 
-STREAM_EVENTS_URL = "http://159.203.72.183:8000/events"
-SET_DATA_URL = "http://159.203.72.183:8000/data/{client_id}"
-
-
 logger = logging.getLogger(__name__)
 
 
-@asyncio.coroutine
-def schedule(interval, previous_deadline=None, loop=None):
-    """Wait for an interval to pass before proceeding.
-    There are two special cases where we don't wait:
-      1. If there's no previous deadline (the first time we're called)
-      2. If we're backed up (duration exceeds interval)
-    This function is a coroutine.
-    """
-    now = datetime.datetime.now().replace(microsecond=0)
+class ColorUpdater:
+    encoding = "UTF-8"
 
-    # This is the first time we've been called.
-    if previous_deadline is None:
-        return now
+    client_path_template = "/data/{client_id}"
+    events_path = "/events"
 
-    if interval is None:
-        return
+    def __init__(self, base_url, interval, loop=None):
+        self.base_url = base_url
+        self.http = None
+        self.interval = interval
+        self.loop = loop
 
-    duration = now - previous_deadline
+    def __enter__(self):
+        self.http = aiohttp.ClientSession(loop=self.loop)
 
-    # Check if we're backed up.
-    if duration > interval:
-        logger.warning("DURATION %s EXCEEDED INTERVAL %s", duration, interval)
-        return now
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.http.close()
+        self.http = None
 
-    # Compute the required delay.
-    interval_seconds = int(interval.total_seconds())
-    next_deadline = datetime.datetime.fromtimestamp(
-        int(time.mktime(now.timetuple()))
-        // interval_seconds
-        * interval_seconds
-        + interval_seconds
-    )
-    delay = next_deadline - now
+    @asyncio.coroutine
+    def update_client(self, client_url, data):
+        http = self.http
+        interval = self.interval
+        loop = self.loop
+        while True:
+            data['color'] = generate_random_color(alpha=0.5)
+            logger.debug("UPDATING %s TO %s", client_url, data)
+            response = yield from http.request("PUT", client_url, data=json_encode(data))
+            response.close()
+            logger.info("UPDATED %s TO %s", client_url, data)
+            if not interval:
+                break
+            logger.info("SLEEPING %s FOR %s SECONDS", client_url, interval)
+            yield from asyncio.sleep(interval, loop=loop)
+            logger.debug("SLEPT %s FOR %s SECONDS", client_url, interval)
 
-    if not delay:
-        return now
+    @asyncio.coroutine
+    def next_event(self, response):
+        encoding = self.encoding
+        event_type = None
+        data_text = ""
+        while True:
+            line = yield from response.content.readline()
+            logger.debug("LINE %r", line)
+            line = line.decode(encoding).strip()
 
-    logger.info("WAITING %s UNTIL %s", delay, next_deadline)
-    yield from asyncio.sleep(delay.total_seconds(), loop=loop)
-    logger.debug("WAITED %s UNTIL %s", delay, next_deadline)
+            if line:
+                key, value = line.split(None, 1)
+                key = key.rstrip(":")
 
-    return next_deadline
+                if key not in ('data', 'event'):
+                    continue
 
+                if "event" == key:
+                    event_type = value
+                    continue
 
-@asyncio.coroutine
-def update_client(http, client_id, interval, loop=None):
-    logger.info("ADDED CLIENT %s", client_id)
-    deadline = None
-    i = 1
-    while True:
-        deadline = yield from schedule(interval, deadline, loop=loop)
-        logger.debug("UPDATING %s @ %s", client_id, deadline)
-        data = dict(text="{}.{}".format(client_id, i), color=generate_random_color())
-        response = yield from http.request("PUT", SET_DATA_URL.format(client_id=client_id), data=json_encode(data))
-        response.close()
-        logger.info("UPDATED %s @ %s", client_id, deadline)
-        if 200 != response.status:
-            break
-        i += 1
-    logger.info("REMOVED CLIENT %s", client_id)
+                if "data" == key:
+                    data_text += value
+                    continue
 
+            if not data_text:
+                event_type = None
+                continue
+            return event_type, json.loads(data_text)
 
-@asyncio.coroutine
-def start(interval, loop=None):
-    http = aiohttp.ClientSession(loop=loop)
-    response = yield from http.request("GET", STREAM_EVENTS_URL)
-
-    clients = set()
-
-    while True:
-        line = yield from response.content.readline()
-        line = line.decode('UTF-8').strip()
-        if not line.startswith('data: '):
-            continue
-        data = json.loads(line[6:])
-        client_id = data['id']
-        if client_id in clients:
-            continue
-        clients.add(client_id)
-        asyncio.ensure_future(update_client(http, data['id'], interval, loop=loop), loop=loop)
+    @asyncio.coroutine
+    def start(self):
+        client_path_template = self.client_path_template
+        clients = {}
+        events_url = urllib.parse.urljoin(self.base_url, self.events_path)
+        logger.info("GETTING EVENTS %s", events_url)
+        response = yield from self.http.request("GET", events_url)
+        with contextlib.closing(response):
+            while True:
+                event_type, data = yield from self.next_event(response)
+                client_url = urllib.parse.urljoin(self.base_url, client_path_template.format(client_id=data['id']))
+                if "created" == event_type:
+                    clients[client_url] = asyncio.ensure_future(self.update_client(client_url, data))
+                    logger.info("CREATED TASK %s", client_url)
+                    continue
+                if "deleted" == event_type:
+                    clients[client_url].cancel()
+                    del clients[client_url]
+                    logger.info("DELETED TASK %s", client_url)
+                    continue
 
 
 @click.command()
+@click.argument('base_url', envvar="CLIENT_BASE_URL")
 @click.option('--logging', '-l', default="INFO", envvar="CLIENT_LOGGING", help="Log level", show_default=True)
-@click.option('--interval', '-i', default=0, envvar="CLIENT_INTERVAL", help=u"Scheduled interval", show_default=True)
+@click.option('--interval', '-i', default=0, type=float, envvar="CLIENT_INTERVAL", help=u"Scheduled interval", show_default=True)
 def main(**options):
     logging.basicConfig(level=getattr(logging, options['logging'].upper()))
     loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(start(datetime.timedelta(seconds=options['interval']), loop=loop))
-    except KeyboardInterrupt:
-        loop.stop()
-    finally:
-        loop.close()
+    color_updater = ColorUpdater(options['base_url'], options['interval'], loop=loop)
+    with color_updater:
+        try:
+            loop.run_until_complete(color_updater.start())
+        except KeyboardInterrupt:
+            loop.stop()
+        finally:
+            loop.close()
 
 
 if __name__ == '__main__':
