@@ -11,6 +11,7 @@ from .server import Server
 @click.option('--address', '-a', default="127.0.0.1", envvar="SERVER_ADDRESS", help="Server address", show_default=True)
 @click.option('--port', '-p', default=8000, envvar="SERVER_PORT", help="Server port", show_default=True)
 def main(**options):
+    """Run an event source server."""
     logging.basicConfig(level=getattr(logging, options['logging'].upper()))
     loop = asyncio.get_event_loop()
     server = Server(options['address'], options['port'], loop=loop)

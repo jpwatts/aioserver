@@ -62,7 +62,11 @@ class ColorUpdater:
             line = line.decode(encoding).strip()
 
             if line:
-                key, value = line.split(None, 1)
+                try:
+                    key, value = line.split(None, 1)
+                except ValueError:
+                    continue  # Ignore empty comments.
+
                 key = key.rstrip(":")
 
                 if key not in ('data', 'event'):

@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class BaseEvent:
+    """An abstract event source message."""
+
     encoding = "UTF-8"
     _payload = None
 
@@ -15,6 +17,7 @@ class BaseEvent:
         raise NotImplementedError()
 
     def dump(self, response):
+        """Encode the event and write the payload to a file-like object."""
         payload = self._payload
         if payload is None:
             payload = self.encode().encode(self.encoding)
@@ -23,12 +26,15 @@ class BaseEvent:
 
 
 class Event(BaseEvent):
+    """A JSON-encoded event source data message."""
+
     def __init__(self, data, event_id=None, event_type=None):
         self.data = data
         self.event_id = event_id
         self.event_type = event_type
 
     def encode(self):
+        """Return an encoded event source data message."""
         text_buffer = io.StringIO()
 
         event_id = self.event_id
@@ -48,10 +54,13 @@ class Event(BaseEvent):
 
 
 class CommentEvent(BaseEvent):
+    """A event source comment."""
+
     def __init__(self, message=""):
         self.message = message
 
     def encode(self):
+        """Return an encoded event source comment message."""
         text_buffer = io.StringIO()
 
         message = self.message
@@ -66,11 +75,14 @@ class CommentEvent(BaseEvent):
 
 
 class RetryEvent(BaseEvent):
+    """An event source retry instruction."""
+
     _multiplier = 1000  # specify wait in seconds, but send milliseconds
 
     def __init__(self, wait):
         self.wait = wait
 
     def encode(self):
+        """Return an encoded event source retry message."""
         wait = int(self._multiplier * self.wait)
         return "retry: {}\n\n".format(wait)
