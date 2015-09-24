@@ -70,7 +70,7 @@ class ScheduledUpdate:
         http = aiohttp.ClientSession(loop=loop)
         response = yield from http.request("GET", STREAM_EVENTS_URL)
 
-        client_id = response.headers['id']
+        client_id = response.headers['Client-ID']
         logger.info('MY CONNECTION ID %s', client_id);
         asyncio.ensure_future(self.update_client(http, client_id, interval), loop=loop)
 

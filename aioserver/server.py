@@ -15,44 +15,71 @@ logger = logging.getLogger(__name__)
 
 
 class Client:
-    def __init__(self, client_id, queue):
+    server_name = os.environ.get('USER', "aioserver")
+
+    def __init__(self, server, ip_address, client_id):
+        self.server = server
+        self.ip_address = ip_address
         self.client_id = client_id
-        self.queue = queue
-        self.data = dict(
+        self._update({})
+        self.queue = None
+
+    def _update(self, data):
+        client_id = self.client_id
+        cleaned_data = dict(
             id=client_id,
-            color=generate_random_color(),
-            server=os.environ.get('USER', "aioserver"),
-            text=client_id,
+            color=data.get('color') or generate_random_color(),
+            server=self.server_name,
+            text=data.get('text', client_id)
         )
+        self.data = cleaned_data
+
+    async def update(self, data):
+        self._update(data)
+        await self.server.add_event(Event(self.data, event_type="updated"))
+
+    async def __aenter__(self):
+        client_id = self.client_id
+        logger.info("OPEN %s %s", self.ip_address, client_id)
+
+        server = self.server
+        queue = asyncio.Queue(loop=server.loop)
+
+        for client in server.clients.values():
+            await queue.put(Event(client.data, event_type="created"))
+
+        self.queue = queue
+        server.clients[client_id] = self
+        await server.add_event(Event(self.data, event_type="created"))
+
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        server = self.server
+        client_id = self.client_id
+
+        del server.clients[client_id]
+        self.queue = None
+
+        await self.server.add_event(Event(dict(id=client_id), event_type="deleted"))
+        logger.info("CLOSE %s %s", self.ip_address, client_id)
 
 
 class Server:
     timeout = 30
 
     def __init__(self, address, port, loop=None):
+        if loop is None:
+            loop = asyncio.get_event_loop()
         self.address = address
         self.port = port
-        self.loop = loop or asyncio.get_event_loop()
-        self._clients = collections.OrderedDict()
+        self.loop = loop
+        self.clients = collections.OrderedDict()
         self._server = None
 
-    def add_default_headers(self, request, response):
-        headers = response.headers
-        headers['Access-Control-Allow-Credentials'] = 'true'
-        headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', "*")
-        headers['Access-Control-Allow-Headers'] = "Content-Type"
-        headers['Access-Control-Allow-Methods'] = request.method
-
     async def add_event(self, event):
-        for client in self._clients.values():
+        for client in self.clients.values():
             await client.queue.put(event)
-
-    async def replay_events(self, client):
-        queue = client.queue
-        for connected_client in self._clients.values():
-            if connected_client is client:
-                continue
-            await queue.put(Event(connected_client.data, event_type="created"))
 
     async def stream_events(self, request):
         loop = self.loop
@@ -63,25 +90,23 @@ class Server:
         # time in microseconds
         client_id = str(int(loop.time() * 10**6))
 
-        logger.info("OPEN %s %s", ip_address, client_id)
-
-        queue = asyncio.Queue(loop=loop)
-        client = Client(client_id, queue)
-        self._clients[client_id] = client
-
         response = web.StreamResponse()
         response.content_type = "text/event-stream"
-        self.add_default_headers(request, response)
-        response.headers['id'] = client_id
+        response.headers.update({
+            'Access-Control-Allow-Credentials': "true",
+            'Access-Control-Allow-Headers': "Content-Type",
+            'Access-Control-Allow-Methods': "GET",
+            'Access-Control-Allow-Origin': request.headers.get('Origin', "*"),
+            'Client-ID': client_id
+        })
         response.start(request)
 
         CommentEvent("Howdy {}!".format(client_id)).dump(response)
         RetryEvent(10).dump(response)
 
-        try:
-            await self.replay_events(client)
-            await self.add_event(Event(client.data, event_type="created"))
+        async with Client(self, ip_address, client_id) as client:
             await response.drain()
+            queue = client.queue
             while True:
                 try:
                     event = await asyncio.wait_for(
@@ -93,17 +118,14 @@ class Server:
                     event = CommentEvent()
                 event.dump(response)
                 await response.drain()
-        finally:
-            del self._clients[client_id]
-            await self.add_event(Event(dict(id=client_id), event_type="deleted"))
-            logger.info("CLOSE %s %s", ip_address, client_id)
+
         await response.write_eof()
         return response
 
     async def get_data(self, request):
         client_id = request.match_info['client_id']
         try:
-            client = self._clients[client_id]
+            client = self.clients[client_id]
         except KeyError:
             raise web.HTTPNotFound()
         return web.Response(
@@ -114,7 +136,7 @@ class Server:
     async def set_data(self, request):
         client_id = request.match_info['client_id']
         try:
-            client = self._clients[client_id]
+            client = self.clients[client_id]
         except KeyError:
             raise web.HTTPNotFound()
 
@@ -126,12 +148,10 @@ class Server:
         if not isinstance(data, dict):
             raise web.HTTPBadRequest()
 
-        data['id'] = client_id
-        client.data = data
-        await self.add_event(Event(data, event_type="updated"))
+        await client.update(data)
         return web.Response(
             content_type="application/json",
-            text="{}\n".format(json_encode(data))
+            text="{}\n".format(json_encode(client.data))
         )
 
     async def start(self):
