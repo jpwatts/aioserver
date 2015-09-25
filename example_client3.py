@@ -1,11 +1,10 @@
 #!/usr/bin/env python3.5
 
 import asyncio
-import datetime
 import logging
 import aiohttp
 
-from aioserver.server import generate_random_color, json_encode
+from aioserver.utils import generate_random_color, json_encode
 
 
 STREAM_EVENTS_URL = "http://159.203.72.183:8000/events"
@@ -66,7 +65,7 @@ class ScheduledUpdate:
 
         client_id = response.headers['id']
         logger.info('MY CONNECTION ID %s', client_id);
-        asyncio.ensure_future(self.update_client(http, client_id, interval), loop=loop)
+        asyncio.async(self.update_client(http, client_id, interval), loop=loop)
 
         while True:
             line = yield from response.content.readline()
