@@ -1,1 +1,7 @@
-# Example `asyncio` server
+# Example `asyncio` server from PyTexas 2015
+
+This is an example project from [our tutorial at at PyTexas 2015](https://www.pytexas.org/2015/talk/49).
+
+  * [Slides](http://static.joelwatts.net/asyncio-pytexas-2015/slides.pdf)
+
+I also presented the slides in [my talk](https://www.pytexas.org/2015/talk/50).
