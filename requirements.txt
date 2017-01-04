@@ -1,2 +1,2 @@
-aiohttp==0.17.3
-click==5.1
+aiohttp==1.2.0
+click==6.6
